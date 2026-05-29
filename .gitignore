@@ -1,0 +1,55 @@
+# ==================== PYTHON ====================
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+*.so
+
+# ==================== ENTORNOS VIRTUALES ====================
+entorno/
+venv/
+.venv/
+env/
+ENV/
+
+# ==================== DATOS & BASE DE DATOS ====================
+*.db
+*.sqlite
+*.sqlite3
+*.xlsx
+*.xls
+*.csv
+
+# ==================== STREAMLIT ====================
+.streamlit/
+
+# ==================== JUPYTER ====================
+.ipynb_checkpoints/
+*.ipynb
+
+# ==================== DISTRIBUCIÓN / BUILD ====================
+dist/
+build/
+*.egg-info/
+*.egg
+
+# ==================== LOGS ====================
+*.log
+logs/
+
+# ==================== SISTEMA ====================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ==================== IDEs ====================
+.vscode/
+.idea/
+*.suo
+*.user
+
+# ==================== VARIABLES DE ENTORNO ====================
+.env
+.env.*
+secrets.toml
