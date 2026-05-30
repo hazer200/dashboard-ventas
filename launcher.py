@@ -57,7 +57,14 @@ def run_dashboard():
             print("⛔ Dashboard cancelado.")
             return False
 
-    return run_cmd(["streamlit", "run", "app.py"], "Streamlit Dashboard")
+    # Buscar streamlit en el entorno virtual o en el PATH
+    streamlit_cmd = os.path.join(os.path.dirname(sys.executable), "streamlit")
+    if os.name == "nt":
+        streamlit_cmd += ".exe"
+    if not os.path.exists(streamlit_cmd):
+        streamlit_cmd = "streamlit"  # fallback al PATH del sistema
+
+    return run_cmd([streamlit_cmd, "run", "app.py"], "Streamlit Dashboard")
 
 def run_all():
     print("\n" + "="*50)
