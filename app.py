@@ -35,6 +35,7 @@ def load_data():
     conn = sqlite3.connect(DB_PATH)
     df = pd.read_sql("SELECT * FROM ventas", conn)
     conn.close()
+    df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce")
     return df
 
 @st.cache_data(ttl=3600)
@@ -131,33 +132,50 @@ future_forecast = forecast_best_model(best_model, X_cols, monthly_df)
 st.title("📊 Dashboard de Análisis y Proyección de Ventas")
 st.caption(f"Último dato histórico: {monthly_df.index.max().strftime('%Y-%m-%d')} | Modelo seleccionado: **{best_model_name}** (R²: {metrics[best_model_name]['R2']:.4f})")
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "1️⃣ Sublíneas", "2️⃣ Mundos", "3️⃣ Estacionalidad", 
-    "4️⃣ Modelos & Métricas", "5️⃣ Ganancia por Producto", "6️⃣ Costo Proyectado Nov-Dic 2027"
+    "4️⃣ Modelos & Métricas", "5️⃣ Ganancia por Producto", "6️⃣ Costo Proyectado Nov-Dic 2027",
+    "7️⃣ Rentabilidad"
 ])
 
 with tab1:
     st.header("📦 Ventas por Sublínea")
     sublineas = df.groupby("Mat:SubLinea")["UN"].sum().sort_values(ascending=False).reset_index()
-    top10 = sublineas.head(10)
-    
-    fig1 = px.bar(top10, x="UN", y="Mat:SubLinea", orientation="h", 
+    top10 = sublineas.head(10).copy()
+    total_un = sublineas["UN"].sum()
+    top10["Participación (%)"] = (top10["UN"] / total_un * 100).round(2)
+    top10["etiqueta"] = top10["Participación (%)"].apply(lambda x: f"{x:.1f}%")
+
+    fig1 = px.bar(top10, x="UN", y="Mat:SubLinea", orientation="h",
                   title="Top 10 Sublíneas por Unidades Vendidas",
                   labels={"UN": "Unidades", "Mat:SubLinea": "Sublínea"},
-                  color="UN", color_continuous_scale="Viridis")
-    fig1.update_layout(showlegend=False)
+                  color="UN", color_continuous_scale="Viridis",
+                  text="etiqueta")
+    fig1.update_traces(textposition="outside", textfont=dict(size=12))
+    fig1.update_layout(showlegend=False, xaxis=dict(range=[0, top10["UN"].max() * 1.15]))
     st.plotly_chart(fig1, use_container_width=True)
     st.metric(label="Total de Sublíneas", value=sublineas.shape[0])
-    st.success(f"🏆 Mayor ventas: **{top10.iloc[0]['Mat:SubLinea']}** ({top10.iloc[0]['UN']:,} unidades)")
+    st.success(f"🏆 Mayor ventas: **{top10.iloc[0]['Mat:SubLinea']}** ({top10.iloc[0]['UN']:,} unidades — {top10.iloc[0]['Participación (%)']:.1f}% del total)")
 
 with tab2:
     st.header("🌍 Distribución por Mat:Mundo")
     mundos = df.groupby("Mat:Mundo")["UN"].sum().reset_index()
     
-    fig2 = px.pie(mundos, values="UN", names="Mat:Mundo", 
+    fig2 = px.pie(mundos, values="UN", names="Mat:Mundo",
                   title="Participación de Ventas por Mundo",
-                  hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
-    fig2.update_traces(textposition='inside', textinfo='percent+label')
+                  hole=0.35, color_discrete_sequence=px.colors.qualitative.Pastel)
+    fig2.update_traces(
+        textposition="inside",
+        textinfo="percent+label",
+        textfont=dict(size=14),
+        insidetextorientation="radial"
+    )
+    fig2.update_layout(
+        showlegend=False,
+        height=550,
+        margin=dict(t=60, b=20, l=20, r=20),
+        title_font=dict(size=18)
+    )
     st.plotly_chart(fig2, use_container_width=True)
     
     top_mundo = mundos.sort_values("UN", ascending=False).iloc[0]
@@ -165,20 +183,38 @@ with tab2:
 
 with tab3:
     st.header("📈 Estacionalidad de Ventas")
-    monthly_season = monthly_df.groupby("month")["sales"].agg(["mean", "std", "min", "max"]).reset_index()
     month_names = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
-    monthly_season["month_name"] = monthly_season["month"].apply(lambda x: month_names[x-1])
-    
-    fig3 = px.line(monthly_season, x="month_name", y="mean", 
-                   title="Promedio Mensual de Ventas (Estacionalidad)",
-                   labels={"month_name": "Mes", "mean": "Promedio Unidades"},
-                   markers=True, color_discrete_sequence=["#1f77b4"])
-    fig3.update_yaxes(title="Unidades Vendidas (Promedio)")
+
+    # Ventas mensuales por año
+    monthly_by_year = monthly_df.reset_index().copy()
+    monthly_by_year["month_name"] = monthly_by_year["month"].apply(lambda x: month_names[x-1])
+    monthly_by_year["Año"] = monthly_by_year["year"].astype(str)
+    monthly_by_year["etiqueta"] = monthly_by_year["sales"].apply(lambda x: f"{x:,.0f}")
+
+    fig3 = px.line(
+        monthly_by_year, x="month_name", y="sales", color="Año",
+        title="Ventas Mensuales por Año",
+        labels={"month_name": "Mes", "sales": "Unidades Vendidas", "Año": "Año"},
+        markers=True, text="etiqueta",
+        category_orders={"month_name": month_names},
+        color_discrete_sequence=["#e63946", "#2a9d8f", "#e9c46a", "#457b9d", "#f4a261", "#6a0572", "#3a86ff"]
+    )
+    fig3.update_traces(textposition="top center", textfont=dict(size=10))
+
+    fig3.update_layout(
+        height=520,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        yaxis_title="Unidades Vendidas",
+        xaxis_title="Mes"
+    )
     st.plotly_chart(fig3, use_container_width=True)
-    
-    peak = monthly_season.loc[monthly_season["mean"].idxmax()]
-    low = monthly_season.loc[monthly_season["mean"].idxmin()]
-    st.info(f"📊 **Estacionalidad detectada:**\n- 🟢 Mes Pico: **{peak['month_name']}** ({peak['mean']:.0f} uds)\n- 🔴 Mes Bajo: **{low['month_name']}** ({low['mean']:.0f} uds)\n- 📉 Variación: **{((peak['mean']/low['mean'])-1)*100:.1f}%**")
+
+    monthly_season = monthly_df.groupby("month")["sales"].mean().reset_index()
+    monthly_season["month_name"] = monthly_season["month"].apply(lambda x: month_names[x-1])
+
+    peak = monthly_season.loc[monthly_season["sales"].idxmax()]
+    low  = monthly_season.loc[monthly_season["sales"].idxmin()]
+    st.info(f"📊 **Estacionalidad detectada:**\n- 🟢 Mes Pico: **{peak['month_name']}** ({peak['sales']:,.0f} uds promedio)\n- 🔴 Mes Bajo: **{low['month_name']}** ({low['sales']:,.0f} uds promedio)\n- 📉 Variación: **{((peak['sales']/low['sales'])-1)*100:.1f}%**")
 
 with tab4:
     st.header("🤖 Comparación de Modelos de Proyección")
@@ -190,12 +226,48 @@ with tab4:
         st.dataframe(df_metrics.style.format("{:.2f}"), use_container_width=True)
         
     with col2:
-        fig4 = px.bar(df_metrics.reset_index(), x="Modelo", y="R2", 
+        fig4 = px.bar(df_metrics.reset_index(), x="Modelo", y="R2",
                       title="Precisión por Modelo (R²)",
                       labels={"R2": "R-Squared", "Modelo": "Modelo"},
-                      color="R2", color_continuous_scale="RdYlGn")
-        fig4.update_layout(showlegend=False)
+                      color="R2", color_continuous_scale="RdYlGn",
+                      text=df_metrics["R2"].round(4).astype(str))
+        fig4.update_traces(textposition="outside", textfont=dict(size=12))
+        fig4.update_layout(showlegend=False, yaxis=dict(range=[0, df_metrics["R2"].max() * 1.15]))
         st.plotly_chart(fig4, use_container_width=True)
+
+    # Gráficas MAE, MSE, RMSE al estilo de R2
+    col3, col4, col5 = st.columns(3)
+    df_m = df_metrics.reset_index()
+
+    with col3:
+        fig_mae = px.bar(df_m, x="Modelo", y="MAE",
+                         title="Error Absoluto Medio (MAE)",
+                         labels={"MAE": "MAE", "Modelo": "Modelo"},
+                         color="MAE", color_continuous_scale="RdYlGn_r",
+                         text=df_m["MAE"].round(2).astype(str))
+        fig_mae.update_traces(textposition="outside", textfont=dict(size=12))
+        fig_mae.update_layout(showlegend=False, yaxis=dict(range=[0, df_m["MAE"].max() * 1.15]))
+        st.plotly_chart(fig_mae, use_container_width=True)
+
+    with col4:
+        fig_mse = px.bar(df_m, x="Modelo", y="MSE",
+                         title="Error Cuadrático Medio (MSE)",
+                         labels={"MSE": "MSE", "Modelo": "Modelo"},
+                         color="MSE", color_continuous_scale="RdYlGn_r",
+                         text=df_m["MSE"].round(2).astype(str))
+        fig_mse.update_traces(textposition="outside", textfont=dict(size=12))
+        fig_mse.update_layout(showlegend=False, yaxis=dict(range=[0, df_m["MSE"].max() * 1.15]))
+        st.plotly_chart(fig_mse, use_container_width=True)
+
+    with col5:
+        fig_rmse = px.bar(df_m, x="Modelo", y="RMSE",
+                          title="Raíz del Error Cuadrático (RMSE)",
+                          labels={"RMSE": "RMSE", "Modelo": "Modelo"},
+                          color="RMSE", color_continuous_scale="RdYlGn_r",
+                          text=df_m["RMSE"].round(2).astype(str))
+        fig_rmse.update_traces(textposition="outside", textfont=dict(size=12))
+        fig_rmse.update_layout(showlegend=False, yaxis=dict(range=[0, df_m["RMSE"].max() * 1.15]))
+        st.plotly_chart(fig_rmse, use_container_width=True)
         
     st.subheader("📉 Histórico vs Proyección")
     hist_plot = pd.DataFrame({"Fecha": monthly_df.index, "Histórico": monthly_df["sales"]})
@@ -237,9 +309,14 @@ with tab5:
     fig6 = px.bar(top_ganancia, x="Ganancia_Proyectada", y="Producto", orientation="h",
                   title="Top 10 Productos por Ganancia Proyectada (6 meses)",
                   labels={"Ganancia_Proyectada": "Ganancia Total Proyectada ($)", "Producto": "Tipo de Artículo"},
-                  color="Ganancia_Proyectada", color_continuous_scale="Greens")
-    fig6.update_layout(showlegend=False)
+                  color="Ganancia_Proyectada", color_continuous_scale="Greens",
+                  text=top_ganancia["Ganancia_Proyectada"].apply(lambda x: f"${x:,.2f}"))
+    fig6.update_traces(textposition="outside", textfont=dict(size=11))
+    fig6.update_layout(showlegend=False, xaxis=dict(range=[0, top_ganancia["Ganancia_Proyectada"].max() * 1.2]))
     st.plotly_chart(fig6, use_container_width=True)
+
+    total_ganancia = df_proj["Ganancia_Proyectada"].sum()
+    st.metric(label="💰 Total Ganancia Proyectada (todos los productos, 6 meses)", value=f"${total_ganancia:,.2f}")
 
 with tab6:
     st.header("📅 Costo de Producción Proyectado (Nov-Dic 2027)")
@@ -264,21 +341,132 @@ with tab6:
         nov_data = df_costs[df_costs["Mes"] == "2027-11"].groupby("Producto")["Costo_Total"].sum().nlargest(5).reset_index()
         fig7 = px.bar(nov_data, x="Costo_Total", y="Producto", orientation="h",
                       title="Costo Proyectado - Noviembre 2027 (Top 5)",
-                      color="Costo_Total", color_continuous_scale="Oranges")
-        fig7.update_layout(showlegend=False)
+                      color="Costo_Total", color_continuous_scale="Oranges",
+                      text=nov_data["Costo_Total"].apply(lambda x: f"${x:,.2f}"))
+        fig7.update_traces(textposition="outside", textfont=dict(size=11))
+        fig7.update_layout(showlegend=False, xaxis=dict(range=[0, nov_data["Costo_Total"].max() * 1.2]))
         st.plotly_chart(fig7, use_container_width=True)
-        
+        total_nov = df_costs[df_costs["Mes"] == "2027-11"]["Costo_Total"].sum()
+        st.metric(label="🟠 Total Costo Noviembre 2027", value=f"${total_nov:,.2f}")
+
     with col2:
         dec_data = df_costs[df_costs["Mes"] == "2027-12"].groupby("Producto")["Costo_Total"].sum().nlargest(5).reset_index()
         fig8 = px.bar(dec_data, x="Costo_Total", y="Producto", orientation="h",
                       title="Costo Proyectado - Diciembre 2027 (Top 5)",
-                      color="Costo_Total", color_continuous_scale="Reds")
-        fig8.update_layout(showlegend=False)
+                      color="Costo_Total", color_continuous_scale="Reds",
+                      text=dec_data["Costo_Total"].apply(lambda x: f"${x:,.2f}"))
+        fig8.update_traces(textposition="outside", textfont=dict(size=11))
+        fig8.update_layout(showlegend=False, xaxis=dict(range=[0, dec_data["Costo_Total"].max() * 1.2]))
         st.plotly_chart(fig8, use_container_width=True)
+        total_dec = df_costs[df_costs["Mes"] == "2027-12"]["Costo_Total"].sum()
+        st.metric(label="🔴 Total Costo Diciembre 2027", value=f"${total_dec:,.2f}")
         
-    st.dataframe(df_costs[df_costs["Producto"].isin(top10_nov_dec["Producto"])].sort_values(["Mes", "Costo_Total"], ascending=[True, False]), 
-                 use_container_width=True, height=300)
+    df_costs_display = df_costs[df_costs["Producto"].isin(top10_nov_dec["Producto"])].sort_values(["Mes", "Costo_Total"], ascending=[True, False]).copy()
+    df_costs_display["Costo_Total"] = df_costs_display["Costo_Total"].round(2)
+    st.dataframe(
+        df_costs_display.style.format({"Costo_Total": "${:,.2f}", "UN": "{:,.2f}"}),
+        use_container_width=True, height=300
+    )
     st.caption("📊 *Los costos se calculan usando el costo unitario promedio histórico ponderado por la proyección de ventas del modelo.*")
+
+with tab7:
+    st.header("📈 Rentabilidad por Tipo de Artículo")
+    st.caption("Rentabilidad = (Ganancia / Inversión) × 100 | Inversión = Costo Total | Ganancia = Precio Total - Costo Total")
+
+    # Calcular rentabilidad histórica por tipo de artículo
+    rent_df = df.copy()
+    rent_df["Costo_Total"]   = rent_df["UN"] * rent_df["costo"]
+    rent_df["Precio_Total"]  = rent_df["UN"] * rent_df["Precio"]
+    rent_df["Ganancia"]      = rent_df["Precio_Total"] - rent_df["Costo_Total"]
+
+    rentabilidad = rent_df.groupby("Mat:Tipo Articulo").agg(
+        Inversion=("Costo_Total", "sum"),
+        Ganancia=("Ganancia", "sum")
+    ).reset_index()
+    rentabilidad = rentabilidad[rentabilidad["Inversion"] > 0]
+    rentabilidad["Rentabilidad (%)"] = (rentabilidad["Ganancia"] / rentabilidad["Inversion"] * 100).round(2)
+    rentabilidad = rentabilidad.sort_values("Rentabilidad (%)", ascending=False)
+
+    # Métricas globales en la parte superior — datos proyectados (20 meses)
+    # Reutiliza hist_prop calculado en tab5
+    all_future_months = pd.date_range(
+        start=monthly_df.index.max() + pd.DateOffset(months=1), periods=20, freq='MS'
+    )
+    proj_full = []
+    for f_date in all_future_months:
+        m = f_date.month
+        total_pred = future_forecast.get(f_date, 0)
+        month_props = hist_prop[hist_prop["month"] == m]
+        for _, row in month_props.iterrows():
+            pred_un    = total_pred * row["proportion"]
+            prod_data  = df[df["Mat:Tipo Articulo"] == row["Mat:Tipo Articulo"]]
+            avg_cost   = prod_data["costo"].mean()
+            avg_price  = prod_data["Precio"].mean()
+            costo_tot  = pred_un * avg_cost
+            precio_tot = pred_un * avg_price
+            ganancia   = precio_tot - costo_tot
+            proj_full.append({"Costo_Total": costo_tot, "Precio_Total": precio_tot, "Ganancia": ganancia})
+
+    df_proj_full = pd.DataFrame(proj_full)
+    costo_total_proy    = df_proj_full["Costo_Total"].sum()
+    ganancia_total_proy = df_proj_full["Ganancia"].sum()
+    precio_total_proy   = df_proj_full["Precio_Total"].sum()
+    margen_proy         = (ganancia_total_proy / precio_total_proy * 100) if precio_total_proy > 0 else 0
+
+    col_m1, col_m2, col_m3 = st.columns(3)
+    with col_m1:
+        st.metric("💵 Costo Total Proyectado (20 meses)", f"${costo_total_proy:,.2f}")
+    with col_m2:
+        st.metric("💰 Ganancia Total Proyectada (20 meses)", f"${ganancia_total_proy:,.2f}")
+    with col_m3:
+        st.metric("📊 Margen Proyectado", f"{margen_proy:.2f}%")
+
+    st.divider()
+
+    top15 = rentabilidad.head(15).copy()
+
+    # Gráfica de barras horizontales
+    fig_rent = px.bar(
+        top15, x="Rentabilidad (%)", y="Mat:Tipo Articulo", orientation="h",
+        title="Top 15 Tipos de Artículo por Rentabilidad (%)",
+        labels={"Mat:Tipo Articulo": "Tipo de Artículo", "Rentabilidad (%)": "Rentabilidad (%)"},
+        color="Rentabilidad (%)", color_continuous_scale="RdYlGn",
+        text=top15["Rentabilidad (%)"].apply(lambda x: f"{x:.2f}%")
+    )
+    fig_rent.update_traces(textposition="outside", textfont=dict(size=11))
+    fig_rent.update_layout(
+        showlegend=False,
+        height=520,
+        xaxis=dict(range=[0, top15["Rentabilidad (%)"].max() * 1.2])
+    )
+    st.plotly_chart(fig_rent, use_container_width=True)
+
+    # Métricas resumen
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("🏆 Mayor Rentabilidad",
+                  f"{rentabilidad.iloc[0]['Mat:Tipo Articulo']}",
+                  f"{rentabilidad.iloc[0]['Rentabilidad (%)']:.2f}%")
+    with col2:
+        st.metric("📊 Rentabilidad Promedio",
+                  f"{rentabilidad['Rentabilidad (%)'].mean():.2f}%")
+    with col3:
+        st.metric("📉 Menor Rentabilidad",
+                  f"{rentabilidad.iloc[-1]['Mat:Tipo Articulo']}",
+                  f"{rentabilidad.iloc[-1]['Rentabilidad (%)']:.2f}%")
+
+    # Tabla completa
+    st.subheader("📋 Detalle de Rentabilidad por Producto")
+    st.dataframe(
+        rentabilidad.rename(columns={"Mat:Tipo Articulo": "Tipo de Artículo"})
+            .style.format({
+                "Inversion": "${:,.2f}",
+                "Ganancia": "${:,.2f}",
+                "Rentabilidad (%)": "{:.2f}%"
+            }),
+        use_container_width=True,
+        height=400
+    )
 
 # Footer
 st.divider()
